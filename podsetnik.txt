@@ -1,0 +1,74 @@
+Šake: 21 tačka po šaci
+To je fiksna stvar koju MediaPipe daje. Njegov model za šake (HandLandmarker) uvek vraća tačno 21 tačku po šaci — to su zglobovi prstiju i dlana (po 4 tačke na svakom prstu + 1 na korenu šake = 21). To nije naš izbor, nego koliko taj model po dizajnu detektuje.
+Svaka tačka ima 3 koordinate: x, y (položaj u slici) i z (dubina, koliko je tačka „napred/nazad"). Zato:
+
+jedna šaka = 21 tačka × 3 koordinate = 63
+dve šake = 63 × 2 = 126
+
+Poza: mi smo izabrali 12 od 33 tačke
+MediaPipe-ov model za pozu (PoseLandmarker) vraća 33 tačke za celo telo (glava, ramena, kukovi, kolena, stopala...). Ali nama ne treba celo telo — za znakovni jezik je bitan samo gornji deo (ruke i ramena). Zato smo izabrali 12 tačaka: ramena, laktovi, ručni zglobovi i okolne tačke šaka iz poze.
+
+POSE_IDX = [11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22]
+
+To su indeksi tih 12 tačaka unutar MediaPipe-ovih 33. Brojevi 11-22 su baš ramena, laktovi i zglobovi (MediaPipe ima standardnu numeraciju gde su to te pozicije). Mi smo odabrali da uzmemo samo njih, a da izbacimo lice, kukove, noge.
+
+poza = 12 tačaka × 3 koordinate = 36
+
+To je onih 162 broja po frejmu koje stalno vidiš u oblicima podataka (64 × 162).
+Da rezimiram odakle „naš izbor" a šta je „dato":
+
+21 po šaci, 33 za pozu, 3 koordinate — to MediaPipe daje, ne biramo mi.
+2 šake, 12 od 33 tačke poze, izbacivanje lica — to su naše odluke (šta zadržavamo). I baš te odluke su ono što ćeš obrazložiti u izveštaju: šake jer su srž znaka, gornja poza jer govori gde se znak izvodi u odnosu na telo, lice napolje jer ne nosi informaciju za izolovane znakove i samo bi digao dimenziju.
+
+NAKON KONF MATRICE 
+Ovo je vrlo koristan ispis i lepo se čita. Vidimo nekoliko jasnih obrazaca:
+Uzajamne zamene (model meša par u oba smera):
+
+MECHANIC1 ↔ ROCKINGCHAIR1 (5x + 3x) — oba su znakovi sa pokretom obe ruke koji se ponavlja/ljulja, pa liče.
+PARTY1 ↔ BACKPACK1 (4x + 4x) — verovatno sličan položaj/pokret ruku.
+
+Ovo „u oba smera" je tipičan znak da su dva znaka stvarno vizuelno bliska — ne da je model loš, nego da se pokreti preklapaju.
+Jednosmerne greške:
+
+PATIENT2 → DEAF1 (8x) — najjača pojedinačna greška. Vredi da pogledaš ta dva znaka; verovatno oba imaju dodir lica/ruke u sličnoj zoni.
+CHRISTMAS1 → LUNCH1 i BREAKFAST1 → LUNCH1 (po 5x) — zanimljivo, oba „padaju" u LUNCH1. BREAKFAST i LUNCH su čak i pojmovno srodni (obroci), pa je moguće da i znakovi dele pokret ka ustima.
+NOON1 → HALLOWEEN1 (4x).
+
+Šta ovo znači za tebe, konkretno:
+Za izveštaj — ovo je zlata vredan materijal. Imaš konkretne, objašnjive greške: model meša znakove koji su vizuelno (a ponekad i pojmovno) slični. To pokazuješ kao dokaz da model uči smislene reprezentacije, a ne nasumično — greši baš tamo gde bi i čovek oklevao.
+Za demo — sad znaš kojih nekoliko parova da izbegavaš ako želiš da demo deluje pouzdano. Ako za živi demo biraš podskup od ~10 znakova, izbaci jedan iz svakog problematičnog para (npr. zadrži MECHANIC, izbaci ROCKINGCHAIR; zadrži LUNCH, izbaci BREAKFAST/CHRISTMAS), pa ti ostanu znakovi koje model čisto razdvaja.
+
+Test tačnost (finalni model): 0.713
+
+8:53 AM
+NAKON AUGMENTACIJE
+Augmentacija je pomogla — i to lepo. Da uporedimo:
+
+Pre augmentacije: test 64.5%
+Sad sa augmentacijom: test 70.0% (kod najboljeg vala), čak 71.3% finalni
+To je skok od ~6%, baš u očekivanom opsegu. Val je takođe porastao (70.8% → 71.9%). Imaš konkretan „pre/posle" eksperiment za izveštaj sa jasnim, merljivim efektom — to je tačno ono što istraživački deo traži.
+
+Jedna stvar koju vidim u brojevima, korisna za diskusiju: trening loss je pao jako nisko (0.063), a val/test stoje oko 70%. To znači da model i dalje pomalo „uči napamet" trening skup (jaz između trening i test performansi). To nije problem ni greška — to je očekivano sa samo ~20 primera po znaku. Ali ti govori da je sledeća poluga za poboljšanje pre svega više podataka (npr. vaši sopstveni snimci za demo znakove), ne nužno još jača augmentacija.
+
+Sad imamo solidan LSTM baseline sa augmentacijom (~70%). Prelazimo na drugi model — Transformer — što je srž istraživačkog dela rada (poređenje dve arhitekture pod istim uslovima). Treniraćemo ga na istim podacima, istoj augmentaciji, pa ćemo pošteno uporediti: tačnost, broj parametara, i da li greši na istim parovima znakova kao LSTM.
+
+Šta su podaci
+Postoji skup snimaka gde razni ljudi pokazuju znakove rukama. Da — to su iste reči koje izvodi više različitih ljudi. Na primer, reč „DOG" (pas) pokazuje 24 različite osobe, svako svojim rukama, svojim tempom, ispred svoje kamere. I tako za svih 25 reči koje smo izabrali. Zato model i može da nauči — vidi istu reč kod mnogo ljudi, pa „pohvata" šta im je zajedničko, a ne stil jedne osobe.
+
+Šta je ekstrakcija tačaka
+Model ne gleda sam video (sliku osobe). To bi bilo previše — gomila piksela, pozadina, odeća, osvetljenje, sve nebitno. Umesto toga, svaki snimak smo propustili kroz alat (MediaPipe) koji iz svake sličice videa izvuče samo gde su prsti, šake i ramena — kao kad bi preko ruku nacrtao tačkice. Tako svaki video pretvorimo iz „slike" u „niz tačkica koje se kreću kroz vreme". To je ekstrakcija — uradili smo je za sve snimke jednom, i sačuvali te tačkice.
+
+Kako model uči
+Pokažemo modelu mnogo primera: „evo kako izgledaju ruke kad neko pokazuje DOG", „evo kad pokazuje DARK", i tako za sve reči, od mnogo ljudi. Model postepeno nauči da poveže oblik i kretanje ruku sa pravom rečju. Posle obuke, kad mu daš nov niz tačkica koji nikad nije video, on pogodi koja je reč.
+Najvažniji deo — kako znamo da stvarno radi
+Ovde je trik koji čini rezultat poštenim. Ljude smo podelili u dve grupe:
+
+35 ljudi čije snimke model vidi tokom učenja,
+11 drugih ljudi koje model nikad ne vidi dok uči.
+
+LSTM — čita redom, kao kad slušaš rečenicu
+Zamisli da neko priča priču i ti je pratiš reč po reč, od početka do kraja, i pamtiš šta je bilo ranije da bi razumeo kraj. LSTM tako radi sa pokretom: gleda prvu sličicu, pa drugu, pa treću... redom, i usput „pamti" šta se dešavalo. Na kraju, na osnovu celog tog praćenja, kaže koja je reč.
+Prosto rečeno: LSTM gleda pokret kao film — od početka do kraja, i pamti tok.
+Transformer — gleda sve odjednom i bira šta je važno
+Transformer ne ide redom. On rasprostre ceo pokret pred sobom — sve sličice istovremeno — i onda „odlučuje" koje su sličice međusobno bitne. Kao kad pogledaš celu fotografiju odjednom i odmah ti oko padne na ono najvažnije, umesto da je skeniraš pedalj po pedalj.
+Prosto rečeno: Transformer gleda ceo pokret kao da je raširen na stolu, pa bira koji delovi su ključni.
